@@ -49,9 +49,13 @@ class ModelManager:
     def _fix_config_if_needed(self):
         """Detect and fix missing model_type in config for custom Qwen models"""
         try:
+            # DeepSeek models are natively supported in newer transformers,
+            # using trust_remote_code=False avoids many compatibility issues.
+            trust_remote = "deepseek" not in self.model_id.lower()
+
             config = AutoConfig.from_pretrained(
                 self.model_id, 
-                trust_remote_code=True
+                trust_remote_code=trust_remote
             )
             
             if not hasattr(config, 'model_type') or not config.model_type:
@@ -114,9 +118,12 @@ class ModelManager:
                 # Patch get_max_length
                 if not hasattr(cls, 'get_max_length'):
                     def get_max_length(self):
+                        # Use get_max_cache_shape if available (transformers 4.45+)
+                        if hasattr(self, "get_max_cache_shape"):
+                            return self.get_max_cache_shape()
                         # DeepSeek models expect None if no limit is set, or the actual limit.
-                        # Returning 2048 was causing size mismatch errors.
-                        return getattr(self, 'max_cache_length', None)
+                        # Returning a hardcoded 2048 causes size mismatch errors.
+                        return getattr(self, "max_cache_len", getattr(self, "max_cache_length", None))
                     setattr(cls, 'get_max_length', get_max_length)
                     print(f"[compat] Patched {cls.__name__}.get_max_length")
 
@@ -207,7 +214,7 @@ class ModelManager:
             model_lower = self.model_id.lower()
             sdpa_compatible = any(
                 name in model_lower
-                for name in ["qwen", "llama", "gemma", "mistral", "phi", "falcon"]
+                for name in ["qwen", "llama", "gemma", "mistral", "phi", "falcon", "deepseek"]
             )
             if sdpa_compatible:
                 try:
@@ -222,8 +229,9 @@ class ModelManager:
 
         # Load tokenizer
         print("Loading tokenizer...")
+        trust_remote = "deepseek" not in self.model_id.lower()
         self.tokenizer = AutoTokenizer.from_pretrained(
-            self.model_id, trust_remote_code=True
+            self.model_id, trust_remote_code=trust_remote
         )
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
@@ -231,22 +239,35 @@ class ModelManager:
 
         # Load model with retry logic
         print("Loading model weights (this may take a few minutes)...")
+        trust_remote = "deepseek" not in self.model_id.lower()
         try:
             # Încerci fără max_memory dacă e problemă
             try:
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_id,
-                    trust_remote_code=True,
+                    trust_remote_code=trust_remote,
                     **kw,
                 )
-            except (ValueError, TypeError) as e:
-                if "max_memory" in str(e) or "size" in str(e):
+            except (ValueError, TypeError, RuntimeError) as e:
+                err_msg = str(e).lower()
+
+                # Retry without SDPA if it failed
+                if "sdpa" in err_msg or "attention implementation" in err_msg:
+                    print(f"[warning] SDPA failure: {e}")
+                    print("[warning] Retrying with eager attention...")
+                    kw["attn_implementation"] = "eager"
+                    self.model = AutoModelForCausalLM.from_pretrained(
+                        self.model_id,
+                        trust_remote_code=trust_remote,
+                        **kw,
+                    )
+                elif "max_memory" in err_msg or "size" in err_msg:
                     print(f"[warning] max_memory issue: {e}")
                     print("[warning] Retrying without max_memory limit...")
                     kw.pop("max_memory", None)
                     self.model = AutoModelForCausalLM.from_pretrained(
                         self.model_id,
-                        trust_remote_code=True,
+                        trust_remote_code=trust_remote,
                         **kw,
                     )
                 else:
