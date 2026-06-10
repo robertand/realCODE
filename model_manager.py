@@ -114,7 +114,9 @@ class ModelManager:
                 # Patch get_max_length
                 if not hasattr(cls, 'get_max_length'):
                     def get_max_length(self):
-                        return getattr(self, 'max_cache_length', 2048)
+                        # DeepSeek models expect None if no limit is set, or the actual limit.
+                        # Returning 2048 was causing size mismatch errors.
+                        return getattr(self, 'max_cache_length', None)
                     setattr(cls, 'get_max_length', get_max_length)
                     print(f"[compat] Patched {cls.__name__}.get_max_length")
 
@@ -205,7 +207,7 @@ class ModelManager:
             model_lower = self.model_id.lower()
             sdpa_compatible = any(
                 name in model_lower
-                for name in ["qwen", "llama", "gemma", "mistral", "phi", "falcon"]
+                for name in ["qwen", "llama", "gemma", "mistral", "phi", "falcon", "deepseek"]
             )
             if sdpa_compatible:
                 try:
