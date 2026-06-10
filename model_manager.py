@@ -85,28 +85,51 @@ class ModelManager:
             iu.is_torch_fx_available = is_torch_fx_available
             print("[compat] Patched is_torch_fx_available")
 
-        # transformers 5.x removed seen_tokens/get_max_length/get_usable_length from DynamicCache
-        from transformers.cache_utils import DynamicCache
-        if not hasattr(DynamicCache, 'seen_tokens'):
-            @property
-            def seen_tokens(self):
-                return self.get_seq_length()
-            DynamicCache.seen_tokens = seen_tokens
-            print("[compat] Patched DynamicCache.seen_tokens")
-        if not hasattr(DynamicCache, 'get_max_length'):
-            def get_max_length(self):
-                return 2048
-            DynamicCache.get_max_length = get_max_length
-            print("[compat] Patched DynamicCache.get_max_length")
-        if not hasattr(DynamicCache, 'get_usable_length'):
-            def get_usable_length(self, sequence_length, layer_idx=None):
-                max_length = self.get_max_length()
-                past_length = self.get_seq_length()
-                if max_length is None:
-                    return past_length
-                return min(past_length, max_length - sequence_length)
-            DynamicCache.get_usable_length = get_usable_length
-            print("[compat] Patched DynamicCache.get_usable_length")
+        # transformers 4.41+ moved/removed some attributes from DynamicCache
+        try:
+            import transformers.cache_utils as cu
+            target_classes = []
+            for name in ["Cache", "DynamicCache"]:
+                if hasattr(cu, name):
+                    cls = getattr(cu, name)
+                    if cls not in target_classes:
+                        target_classes.append(cls)
+
+            # Also check main transformers namespace
+            import transformers
+            for name in ["Cache", "DynamicCache"]:
+                if hasattr(transformers, name):
+                    cls = getattr(transformers, name)
+                    if cls not in target_classes:
+                        target_classes.append(cls)
+
+            for cls in target_classes:
+                # Patch seen_tokens
+                if not hasattr(cls, 'seen_tokens'):
+                    def get_seen_tokens(self):
+                        return self.get_seq_length()
+                    setattr(cls, 'seen_tokens', property(get_seen_tokens))
+                    print(f"[compat] Patched {cls.__name__}.seen_tokens")
+
+                # Patch get_max_length
+                if not hasattr(cls, 'get_max_length'):
+                    def get_max_length(self):
+                        return getattr(self, 'max_cache_length', 2048)
+                    setattr(cls, 'get_max_length', get_max_length)
+                    print(f"[compat] Patched {cls.__name__}.get_max_length")
+
+                # Patch get_usable_length
+                if not hasattr(cls, 'get_usable_length'):
+                    def get_usable_length(self, sequence_length, layer_idx=None):
+                        max_length = self.get_max_length()
+                        past_length = self.get_seq_length()
+                        if max_length is None:
+                            return past_length
+                        return min(past_length, max_length - sequence_length)
+                    setattr(cls, 'get_usable_length', get_usable_length)
+                    print(f"[compat] Patched {cls.__name__}.get_usable_length")
+        except Exception as e:
+            print(f"[compat] Failed to apply DynamicCache patches: {e}")
 
     def load(self):
         if self._loaded:
