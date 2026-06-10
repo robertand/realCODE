@@ -1,0 +1,11 @@
+torch>=2.5.0
+transformers>=4.47.0
+accelerate>=1.2.0
+bitsandbytes>=0.45.0
+sentencepiece>=0.2.0
+protobuf>=5.29.0
+huggingface-hub>=0.27.0
+scipy>=1.14.0
+rich>=13.0.0
+prompt_toolkit>=3.0.0
+# flash-attn>=2.6.0  # optional: for extra speed on compatible CUDA setups
