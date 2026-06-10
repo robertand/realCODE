@@ -207,7 +207,7 @@ class ModelManager:
             model_lower = self.model_id.lower()
             sdpa_compatible = any(
                 name in model_lower
-                for name in ["qwen", "llama", "gemma", "mistral", "phi", "falcon", "deepseek"]
+                for name in ["qwen", "llama", "gemma", "mistral", "phi", "falcon"]
             )
             if sdpa_compatible:
                 try:
